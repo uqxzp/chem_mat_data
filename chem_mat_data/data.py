@@ -528,14 +528,20 @@ class HOPV15Parser(AbstractXyzParser):
             # and we've seen some QChem data, this is likely a new molecule
             elif in_qchem_section and qchem_count >= 1:
                 # Check if this line looks like a SMILES string starting a new molecule
-                if (len(line) > 20 and
-                    not line.startswith('InChI=') and
-                    not line.startswith('QChem ') and
-                    not line.startswith('Conformer ') and
-                    not line.replace('.', '').replace(',', '').replace('-', '').replace('nan', '').replace(' ', '').isdigit() and
-                    ('c' in line.lower() or 'C' in line) and  # Contains carbon (likely organic chemistry)
-                    '(' in line and ')' in line):  # Has typical SMILES parentheses
+                # A SMILES line is likely if:
+                # - It's not empty
+                # - It doesn't start with known keywords (InChI, QChem, Conformer)
+                # - It's not a number-only line
+                # - It contains organic chemistry patterns (carbon atoms, bonds like =)
+                # - It contains typical SMILES characters
+                is_not_keyword = (not line.startswith('InChI=') and
+                                 not line.startswith('QChem ') and
+                                 not line.startswith('Conformer '))
+                is_not_number = not line.replace('.', '').replace(',', '').replace('-', '').replace('nan', '').replace(' ', '').isdigit()
+                has_organic_patterns = ('c' in line.lower() or 'C' in line)
+                has_smiles_chars = ('=' in line or '(' in line or '[' in line or '#' in line)
 
+                if (is_not_keyword and is_not_number and has_organic_patterns and has_smiles_chars and len(line) >= 5):
                     # This is likely the start of a new molecule
                     # Remove this line from current chunk and save the current chunk
                     current_chunk_lines.pop()

@@ -148,18 +148,31 @@ def ensure_dataset(dataset_name: str,
                 pass
                 
             # 20.11.24
-            # In the second instance we are going to try and download the 'zip' compressed version of the 
+            # In the second instance we are going to try and download the 'zip' compressed version of the
             # dataset. Some datasets will be available either .gz (files only) or .zip (folders) and we
             # need to be able to handle both cases.
             try:
                 file_name_compressed = f'{file_name}.zip'
                 file_path_compressed = file_share.download_file(file_name_compressed, folder_path=folder_path)
-                
-                # Unpack the downloaded zip archive to the "file_path" file path
-                folder_path = os.path.dirname(file_path)
+
+                # Unpack the downloaded zip archive to the parent folder
+                extract_path = os.path.dirname(file_path)
                 with zipfile.ZipFile(file_path_compressed, 'r') as zip_ref:
-                    zip_ref.extractall(folder_path)
-                                    
+                    zip_ref.extractall(extract_path)
+
+                # After extraction, check if the expected file/folder path exists
+                # For xyz_bundle and similar folder-based datasets, this will be a directory
+                if os.path.exists(file_path):
+                    # Add to cache if requested
+                    if use_cache:
+                        config.cache.add_dataset(
+                            name=dataset_name,
+                            typ=extension,
+                            path=file_path,
+                            metadata=file_share['datasets'][dataset_name],
+                        )
+                    return file_path
+
             except Exception:
                 #print(exc)
                 pass
@@ -331,28 +344,32 @@ def load_smiles_dataset(dataset_name: str,
 def load_graph_dataset(dataset_name: str,
                        folder_path: str = os.getcwd(),
                        config: Optional[Config] = None,
+                       use_cache: bool = True,
                        ) -> List[dict]:
     """
-    Loads the graph dict representations for the dataset with the unique string identifier ``dataset_name`` 
+    Loads the graph dict representations for the dataset with the unique string identifier ``dataset_name``
     and returns them as a list of dictionaries. Each dictionary represents a single graph and contains
     the node attributes, edge attributes, edge indices, and optionally node coordinates.
-    
+
     :param dataset_name: The unique string identifier of the dataset.
     :param folder_path: The absolute path to the folder where the dataset files should be
         stored. The default is the current working directory.
-        
+    :param use_cache: Boolean flag of whether or not to use the local file system cache or force a
+        re-download.
+
     :returns: A list of dictionaries where each dictionary represents a single graph.
     """
-    # The "ensure_dataset" function is a utility function which will make sure that the dataset 
-    # in question just generally exists. To do this, the function first checks if the dataset 
-    # file already eixsts in the given folder. If that is not the case it will attempt to download 
-    # the dataset from the remote file share server. Either way, the function WILL return a path 
+    # The "ensure_dataset" function is a utility function which will make sure that the dataset
+    # in question just generally exists. To do this, the function first checks if the dataset
+    # file already eixsts in the given folder. If that is not the case it will attempt to download
+    # the dataset from the remote file share server. Either way, the function WILL return a path
     # towards the requested dataset file in the end.
     file_path = ensure_dataset(
-        dataset_name, 
-        extension='mpack', 
+        dataset_name,
+        extension='mpack',
         folder_path=folder_path,
         config=config,
+        use_cache=use_cache,
     )
     
     # Then we simply have to load the graphs from that file and return them

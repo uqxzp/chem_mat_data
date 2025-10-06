@@ -96,10 +96,20 @@ url=<nextcloud_server_url>
 
 ## Package Structure
 
-- Main package: `chem_mat_data/`
-- Tests: `tests/`
-- Scripts: `chem_mat_data/scripts/`: The pycomex experiment modules which implement the processing pipelines for each of the datasets.
-- Configuration: Uses `pyproject.toml` with hatchling build system
+- `pyproject.toml`: Project configuration and dependencies
+- `README.md`: Project overview and instructions
+- `chem_mat_data/`: Main package source code
+    - `cli.py`: Command line interface
+    - `config.py`: Configuration management
+    - `data.py`: Data serialization/deserialization
+    - `graph.py`: Graph processing utilities
+    - `main.py`: Core dataset loading functions
+    - `processing.py`: Dataset processing and validation
+    - `web.py`: Nextcloud file share client
+- `tests/`: Unit and integration tests
+- `scripts/`: Data processing scripts for dataset creation
+- `docs/`: Documentation source files
+    - `docs/architecture_decisions/`: Architecture Decision Records (ADRs)
 
 ## Data Format
 

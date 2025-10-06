@@ -103,11 +103,15 @@ class Cache:
                 archive.write(path, os.path.basename(path))
                 
         elif os.path.isdir(path):
+            # Preserve the folder structure by including the folder name in the archive
+            folder_name = os.path.basename(path)
             with zipfile.ZipFile(dest_path, mode='w') as archive:
                 for root, dirs, files in os.walk(path):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        archive.write(file_path, os.path.relpath(file_path, path))
+                        # Include the folder name in the archive path
+                        arcname = os.path.join(folder_name, os.path.relpath(file_path, path))
+                        archive.write(file_path, arcname)
         
         # ~ dataset metadata
         # Besides the actual dataset data we also want to store some metadata about the dataset 

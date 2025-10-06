@@ -22,7 +22,7 @@ def test_ensure_dataset_with_folder_works():
         path = ensure_dataset(
             dataset_name='_test2',
             extension='xyz_bundle',
-            use_cache=False,
+            use_cache=True,
             folder_path=temp_path,
         )
     
@@ -42,7 +42,7 @@ def test_load_xyz_dataset_works():
         df: pd.DataFrame = load_xyz_dataset(
             dataset_name='_test2',
             folder_path=temp_path,
-            use_cache=False
+            use_cache=True
         )
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0
@@ -59,7 +59,7 @@ def test_load_smiles_dataset_works():
         df: pd.DataFrame = load_smiles_dataset(
             dataset_name='clintox',
             folder_path=temp_path,
-            use_cache=False
+            use_cache=True
         )
         assert isinstance(df, pd.DataFrame)
         assert len(df) > 0

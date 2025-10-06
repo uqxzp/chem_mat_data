@@ -15,7 +15,7 @@ from chem_mat_data.main import get_file_share
 #       This is the name of the dataset that will be used to identify the dataset in the
 #       file share server. It will also be used to create the folder structure for the dataset
 #       on the file share server.
-DATASET_NAME: str = 'zinc250'
+DATASET_NAME: str = 'zinc250k'
 # :param SMILES_COLUMN:
 #       This is the string name of the CSV column which contains the SMILES strings of
 #       the molecules.
@@ -49,15 +49,19 @@ METADATA: dict = {
     'tags': [
         'Molecules', 
         'SMILES', 
-        'Biology', 
+        'Biology',
+        'Drug Discovery',
     ],
     'sources': [
+        'https://pubs.acs.org/doi/10.1021/ci049714%2B',
+        'https://pubs.acs.org/doi/10.1021/acscentsci.7b00572',
         'https://www.kaggle.com/datasets/basu369victor/zinc250k',  
     ],
+    'verbose': 'ZINC250K Subset of Drug-like Molecules',
     'target_descriptions': {
-        '0': 'Octanol-water partition coefficient (logP)',
-        '1': 'Quantitative Estimation of Drug-likeness (QED)',
-        '2': 'Synthetic Accessibility Score (SAS)',
+        '0': 'logP - Octanol-water partition coefficient',
+        '1': 'QED - Quantitative Estimation of Drug-likeness',
+        '2': 'SAS - Synthetic Accessibility Score',
     }
 }
 

@@ -695,20 +695,30 @@ datasets:
         - Classification
         targets: 617
         verbose: Toxicology
-    zinc250:
+    zinc250k:
         compounds: 249455
+        description: "Curated subset of approximately 250000 drug-like, commercially\
+            \ available small organic molecules selected for virtual screening and\
+            \ molecular generation benchmarks, each represented as a molecular graph\
+            \ of up to 38 heavy atoms.Data were retrieved from the ZINC database (ZINC15),\
+            \ filtered for molecular size and drug-likeness, and were processed as\
+            \ part of the \"Automatic Chemical Design Using a Data-Driven Continuous\
+            \ Representation of Molecules\" study by G\xF3mez-Bombarelli et al."
         raw:
         - csv
         sources:
+        - https://pubs.acs.org/doi/10.1021/acscentsci.7b00572
         - https://www.kaggle.com/datasets/basu369victor/zinc250k
         tags:
         - Molecules
         - SMILES
         - Biology
+        - Drug Discovery
         target_descriptions:
-            '0': Octanol-water partition coefficient (logP)
-            '1': Quantitative Estimation of Drug-likeness (QED)
-            '2': Synthetic Accessibility Score (SAS)
+            '0': logP - Octanol-water partition coefficient
+            '1': QED - Quantitative Estimation of Drug-likeness
+            '2': SAS - Synthetic Accessibility Score
         target_type:
         - regression
         targets: 3
+        verbose: ZINC250K Subset of Drug-like Molecules
