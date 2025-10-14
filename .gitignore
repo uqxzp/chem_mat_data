@@ -43,3 +43,6 @@ adrs/*
 *.zip
 *.data
 *.backup
+
+**/results/*
+**/lightning_logs/*
