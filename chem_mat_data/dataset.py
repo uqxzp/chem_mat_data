@@ -1306,4 +1306,3 @@ class ShuffleDataset(StreamingDataset):
         :returns: The number of items that will be yielded
         """
         return len(self.dataset)
-        
