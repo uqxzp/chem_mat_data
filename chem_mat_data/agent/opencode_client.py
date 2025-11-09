@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -36,7 +36,7 @@ def send_message(message: str) -> str:
             "Opencode model is not configured. Run `opencode config set model provider/model` first."
         )
     provider_id, model_id = model_ref.split("/", 1)
-    session_resp = client._client.post(  # type: ignore[attr-defined]  # noqa: SLF001
+    session_resp = client._client.post(
         "/session",
         json={},
         timeout=httpx.Timeout(30.0),
@@ -45,7 +45,7 @@ def send_message(message: str) -> str:
     session_resp.raise_for_status()
     session_id = session_resp.json()["id"]
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "messageID": f"msg_{uuid4().hex}",
         "model": {
             "providerID": provider_id,
@@ -60,34 +60,34 @@ def send_message(message: str) -> str:
     }
 
     try:
-        response = client._client.post(  # type: ignore[attr-defined]  # noqa: SLF001
+        response = client._client.post(
             f"/session/{session_id}/message",
             json=payload,
             timeout=httpx.Timeout(60.0),
             headers={"Content-Type": "application/json"},
         )
         response.raise_for_status()
-    except httpx.HTTPStatusError as exc:  # pragma: no cover - best effort debugging aid
+    except httpx.HTTPStatusError as exc:
         resp = exc.response
         raise RuntimeError(
             f"POST /session/{session_id}/message failed "
             f"with {resp.status_code}: {resp.text}\nPayload: {payload}"
         ) from exc
-    except httpx.HTTPError as exc:  # pragma: no cover - best effort debugging aid
+    except httpx.HTTPError as exc:
         raise RuntimeError(
             f"Failed to post message due to network error: {payload}"
         ) from exc
-    body: Dict[str, Any]
+    body: dict[str, Any]
     try:
         body = response.json()
     except ValueError:
         body = {}
 
-    text = _extract_text(body)
+    text = extract_text(body)
     if text:
         return text
 
-    history = client._client.get(  # type: ignore[attr-defined]  # noqa: SLF001
+    history = client._client.get(
         f"/session/{session_id}/message",
         timeout=httpx.Timeout(30.0),
     )
@@ -101,7 +101,7 @@ def send_message(message: str) -> str:
         info = entry.get("info", {})
         if info.get("role") != "assistant":
             continue
-        text = _extract_text({"parts": entry.get("parts", [])})
+        text = extract_text({"parts": entry.get("parts", [])})
         if text:
             return text
 
@@ -116,11 +116,11 @@ def send_message_with_prompt(link: str) -> str:
 
     :returns: The assistant reply text supplied by Opencode.
     """
-    prompt = _build_prompt(link)
+    prompt = build_prompt(link)
     return send_message(prompt)
 
 
-def _extract_text(data: Dict[str, Any]) -> Optional[str]:
+def extract_text(data: dict[str, Any]) -> str | None:
     """
     Returns the first text part contained in ``data`` or ``None``.
     """
@@ -130,7 +130,7 @@ def _extract_text(data: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _build_prompt(link: str) -> str:
+def build_prompt(link: str) -> str:
     """
     Builds the final prompt by combining the OPENCODE_PROMPT value with ``link``.
     """
