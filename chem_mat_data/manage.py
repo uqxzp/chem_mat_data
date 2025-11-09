@@ -27,6 +27,7 @@ from chem_mat_data.utils import TEMPLATE_ENV
 from chem_mat_data.utils import CsvListType
 from chem_mat_data.utils import open_file_in_editor
 from chem_mat_data.utils import RichMixin
+from chem_mat_data.agent.opencode_client import send_message_with_prompt
 
 # The path to the "scripts" folder of the experiment modules
 SCRIPTS_PATH: str = os.path.join(PATH, 'scripts')
@@ -152,6 +153,10 @@ class CLI(click.RichGroup):
         # docs command group
         self.add_command(self.docs_group)
         self.docs_group.add_command(self.docs_collect_datasets_command)
+
+        # agent command group
+        self.add_command(self.agent_group)
+        self.agent_group.add_command(self.agent_process_command)
 
     ## == METADATA COMMAND GROUP ==
     # This command group is used to manage the metadata.yml file both locally and on the remote server 
@@ -716,6 +721,32 @@ class CLI(click.RichGroup):
         
         click.secho('✅ datasets overview written to file', fg='green')
         click.secho('')
+
+    ## == AGENT COMMAND GROUP ==
+    # Commands for interacting with the coding agent helpers.
+    
+    @click.group('agent', help='Commands for interacting with the coding agent.')
+    @click.pass_obj
+    def agent_group(self,
+                    ) -> None:
+        """
+        This command group bundles helper commands for communicating with the AI coding agent.
+        """
+        pass
+
+    @click.command('process', short_help='Send a greeting to the configured agent.')
+    @click.argument('name', type=str)
+    @click.pass_obj
+    def agent_process_command(self,
+                              name: str,
+                              ) -> None:
+        """
+        Sends a greeting with ``name`` through the Opencode client and prints the reply.
+
+        :param name: The value inserted into the greeting message.
+        """
+        response = send_message_with_prompt(name)
+        click.echo(response)
 
 
 @click.group(cls=CLI)
