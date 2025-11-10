@@ -7,8 +7,11 @@ from uuid import uuid4
 import httpx
 from opencode_ai import Opencode
 
+# TODO: automate daemon start with port 54321. Execute in terminal: opencode serve --port 54321
+# TODO: automate config creation in ~/.config/opencode/config.json with model key
+
 DEFAULT_PROMPT = (
-    "You are ChemMatData's research assistant. Given a publication URL, locate where the "
+    "You are a research assistant. Given a publication URL, locate where the "
     "associated dataset can be downloaded (supplementary info, figshare/Zenodo/GitHub, "
     "institutional repository, etc.). Return the canonical dataset link and list the files that "
     "contain the usable data (CSV, JSON, HDF5, etc.). If no link is found, reply with 'DATA LINK "
