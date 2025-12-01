@@ -4,7 +4,7 @@ import yaml
 import time
 import difflib
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import rich_click as click
 from prettytable import PrettyTable, TableStyle
@@ -27,7 +27,13 @@ from chem_mat_data.utils import TEMPLATE_ENV
 from chem_mat_data.utils import CsvListType
 from chem_mat_data.utils import open_file_in_editor
 from chem_mat_data.utils import RichMixin
-from chem_mat_data.agent.opencode_client import send_message_with_prompt
+from chem_mat_data.agent.extraction_agent import (
+    DEFAULT_LINKS_PATH,
+    DEFAULT_SCRIPT_PATH,
+    discover_links,
+    generate_script_from_links,
+    load_links,
+)
 
 # The path to the "scripts" folder of the experiment modules
 SCRIPTS_PATH: str = os.path.join(PATH, 'scripts')
@@ -156,7 +162,8 @@ class CLI(click.RichGroup):
 
         # agent command group
         self.add_command(self.agent_group)
-        self.agent_group.add_command(self.agent_process_command)
+        self.agent_group.add_command(self.agent_process_link_command)
+        self.agent_group.add_command(self.agent_generate_script_command)
 
     ## == METADATA COMMAND GROUP ==
     # This command group is used to manage the metadata.yml file both locally and on the remote server 
@@ -734,19 +741,105 @@ class CLI(click.RichGroup):
         """
         pass
 
-    @click.command('process', short_help='Send a greeting to the configured agent.')
-    @click.argument('name', type=str)
+    @click.command('process_link', short_help='Find dataset download links for a publication.')
+    @click.argument('publication_url', type=str)
+    @click.option(
+        '--output',
+        'output_path',
+        type=click.Path(dir_okay=False, writable=True, resolve_path=True),
+        default=None,
+        help='Path to store the discovered download links JSON.',
+    )
     @click.pass_obj
-    def agent_process_command(self,
-                              name: str,
-                              ) -> None:
+    def agent_process_link_command(self,
+                                   publication_url: str,
+                                   output_path: Optional[str],
+                                   ) -> None:
         """
-        Sends a greeting with ``name`` through the Opencode client and prints the reply.
+        Runs the first agent prompt to discover dataset download links for ``publication_url``.
 
-        :param name: The value inserted into the greeting message.
+        :param publication_url: The URL of the publication that releases the dataset.
+        :param output_path: Optional path where the discovered links JSON will be written.
         """
-        response = send_message_with_prompt(name)
-        click.echo(response)
+        try:
+            result = discover_links(publication_url)
+            saved_path = result.save(output_path)
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        click.echo('Download links:')
+        if result.download_links:
+            for link in result.download_links:
+                click.echo(f'- {link}')
+        else:
+            click.echo('- none found')
+
+        if result.notes:
+            click.echo(f'Notes: {result.notes}')
+
+        click.echo(f'Saved to: {saved_path}')
+
+    @click.command('generate_script', short_help='Generate a dataset script from saved download links.')
+    @click.option(
+        '--links-path',
+        type=click.Path(dir_okay=False, readable=True, resolve_path=True),
+        default=None,
+        help=f'Path to the JSON produced by agent process. Defaults to {DEFAULT_LINKS_PATH}.',
+    )
+    @click.option(
+        '--output',
+        'output_path',
+        type=click.Path(dir_okay=False, writable=True, resolve_path=True),
+        default=None,
+        help=f'Path to write the generated script. Defaults to {DEFAULT_SCRIPT_PATH}.',
+    )
+    @click.option(
+        '--publication-url',
+        type=str,
+        default=None,
+        help='Optional publication URL override for the script prompt.',
+    )
+    @click.option(
+        '--mcp-endpoint',
+        type=str,
+        default=None,
+        help='Optional MCP file server endpoint to mention in the prompt.',
+    )
+    @click.pass_obj
+    def agent_generate_script_command(self,
+                                      links_path: Optional[str],
+                                      output_path: Optional[str],
+                                      publication_url: Optional[str],
+                                      mcp_endpoint: Optional[str],
+                                      ) -> None:
+        """
+        Runs the second agent prompt to generate a dataset conversion script using stored links.
+
+        :param links_path: Optional path to the stored download links JSON file.
+        :param output_path: Optional path for the generated script file.
+        :param publication_url: Optional publication URL to provide context for the script.
+        :param mcp_endpoint: Optional MCP file server endpoint for file inspection.
+        """
+        try:
+            link_result = load_links(links_path)
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        if not link_result.download_links:
+            raise click.ClickException('No download links available to generate a script.')
+
+        publication = publication_url or link_result.publication_url or None
+        try:
+            script_result = generate_script_from_links(
+                link_result.download_links,
+                publication_url=publication,
+                mcp_endpoint=mcp_endpoint,
+                output_path=output_path,
+            )
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        click.echo(f'Generated script written to: {script_result.output_path}')
 
 
 @click.group(cls=CLI)

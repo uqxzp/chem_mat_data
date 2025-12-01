@@ -7,36 +7,37 @@ from uuid import uuid4
 import httpx
 from opencode_ai import Opencode
 
-# TODO: automate daemon start with port 54321. Execute in terminal: opencode serve --port 54321
-# TODO: automate config creation in ~/.config/opencode/config.json with model key
+# opencode serve --port 54321
+# cmmanage agent process_link https://www.nature.com/articles/sdata201422
+# cmmanage agent generate_script --mcp-endpoint "file-download (tool: download file)"
 
-DEFAULT_PROMPT = (
-    "You are a research assistant. Given a publication URL, locate where the "
-    "associated dataset can be downloaded (supplementary info, figshare/Zenodo/GitHub, "
-    "institutional repository, etc.). Return the canonical dataset link and list the files that "
-    "contain the usable data (CSV, JSON, HDF5, etc.). If no link is found, reply with 'DATA LINK "
-    "NOT FOUND' and briefly describe what you checked. Reply exactly in this format:\n"
-    "- Dataset link: <URL or DATA LINK NOT FOUND>\n"
-    "- Key files:\n"
-    "  - <file name>: <why it matters>\n"
-    "- Notes: <how you located the link or why it is missing>"
-)
+# TODO: Which formats exactly do we want/should the prompt contain?
+DEFAULT_PROMPT = """
+You are a research assistant focused on chemistry and materials science datasets.
+Given a publication URL, find direct download URLs for the dataset (supplementary information,
+Zenodo/Figshare/OSF/GitHub releases, institutional repositories, lab-hosted archives, etc.).
+Only keep links that directly download files or archives containing SMILES, SDF, XYZ, or CIF data.
+
+Return a JSON object only:
+{
+  "download_links": ["https://direct-download-1", "..."],
+  "notes": "short bullet points about where the links were found or why none were found"
+}
+
+If nothing is available, return an empty list for "download_links" and explain in "notes".
+"""
 
 
 def send_message(message: str) -> str:
     """
-    Sends ``message`` to the configured Opencode provider and returns the reply text.
-
-    :param message: The user prompt to forward to the model.
-
-    :returns: The assistant reply text supplied by Opencode.
+    Sends the message to the configured Opencode provider and returns the reply text
     """
     client = Opencode()
     config = client.config.get()
     model_ref = getattr(config, "model", None)
     if not model_ref:
         raise RuntimeError(
-            "Opencode model is not configured. Run `opencode config set model provider/model` first."
+            "Opencode model not configured"
         )
     provider_id, model_id = model_ref.split("/", 1)
     session_resp = client._client.post(
@@ -113,11 +114,7 @@ def send_message(message: str) -> str:
 
 def send_message_with_prompt(link: str) -> str:
     """
-    Sends the configured research prompt with the given ``link`` appended and returns the reply.
-
-    :param link: The publication URL that should be appended to the base prompt.
-
-    :returns: The assistant reply text supplied by Opencode.
+    Sends the configured research prompt with the given link appended and returns the reply
     """
     prompt = build_prompt(link)
     return send_message(prompt)
@@ -125,7 +122,7 @@ def send_message_with_prompt(link: str) -> str:
 
 def extract_text(data: dict[str, Any]) -> str | None:
     """
-    Returns the first text part contained in ``data`` or ``None``.
+    Returns the first text part contained in data or None
     """
     for part in data.get("parts", []):
         if isinstance(part, dict) and part.get("type") == "text":
@@ -135,7 +132,7 @@ def extract_text(data: dict[str, Any]) -> str | None:
 
 def build_prompt(link: str) -> str:
     """
-    Builds the final prompt by combining the OPENCODE_PROMPT value with ``link``.
+    Builds the final prompt by combining the OPENCODE_PROMPT value with the link
     """
     base_prompt = os.environ.get("OPENCODE_PROMPT", DEFAULT_PROMPT).strip()
     return f"{base_prompt}\n\nPublication: {link}".strip()
