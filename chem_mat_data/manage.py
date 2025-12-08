@@ -4,7 +4,7 @@ import yaml
 import time
 import difflib
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 import rich_click as click
 from prettytable import PrettyTable, TableStyle
@@ -26,14 +26,7 @@ from chem_mat_data.utils import METADATA_PATH
 from chem_mat_data.utils import TEMPLATE_ENV
 from chem_mat_data.utils import CsvListType
 from chem_mat_data.utils import open_file_in_editor
-from chem_mat_data.utils import RichMixin
-from chem_mat_data.agent.extraction_agent import (
-    DEFAULT_LINKS_PATH,
-    DEFAULT_SCRIPT_PATH,
-    discover_links,
-    generate_script_from_links,
-    load_links,
-)
+from chem_mat_data.utils import RichMixin 
 
 # The path to the "scripts" folder of the experiment modules
 SCRIPTS_PATH: str = os.path.join(PATH, 'scripts')
@@ -92,6 +85,56 @@ class RichDiffDisplay(RichMixin):
             yield Text(f"✅ Files are identical", style="green")
         else:
             yield Text(f"📊 {self.changed_lines} lines differ between local and remote files", style="yellow")
+
+
+class RichCommandGroups(RichMixin):
+    """
+    Rich display element that shows command groups in separate panels.
+    Each panel contains all commands of that command group.
+    """
+    def __init__(self, command_groups: Dict[str, click.Group]):
+        self.command_groups = command_groups
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> Any:
+        from rich.table import Table
+
+        for group_name, group in self.command_groups.items():
+            # Create a table for this command group with fixed width for command column
+            table = Table(
+                title=None,
+                box=None,
+                show_header=False,
+                padding=(0, 1),
+                expand=True,
+            )
+            # Force fixed width by setting both min and max to the same value
+            table.add_column("Command", style="bold cyan", min_width=25, max_width=25, no_wrap=True)
+            table.add_column("Description", style="white", ratio=1)
+
+            # Add all subcommands of this group to the table
+            for cmd_name, cmd in group.commands.items():
+                # Try to get help text from various sources
+                short_help = cmd.short_help
+                if not short_help and cmd.help:
+                    # Extract first meaningful line from the full help text
+                    help_lines = [line.strip() for line in cmd.help.split('\n') if line.strip()]
+                    short_help = help_lines[0] if help_lines else ''
+                if not short_help:
+                    short_help = ''
+
+                # Show composite command (e.g., "metadata collect" instead of just "collect")
+                composite_cmd = f"{group_name} {cmd_name}"
+                table.add_row(composite_cmd, short_help)
+
+            # Wrap the table in a panel with the group name as title
+            panel = Panel(
+                table,
+                title=f'[bold]{group_name.capitalize()}[/bold]',
+                title_align='left',
+                style='bright_black',
+            )
+
+            yield panel
 
 
 def is_experiment_archive(folder_path: str) -> bool:
@@ -162,8 +205,37 @@ class CLI(click.RichGroup):
 
         # agent command group
         self.add_command(self.agent_group)
-        self.agent_group.add_command(self.agent_process_link_command)
-        self.agent_group.add_command(self.agent_generate_script_command)
+        self.agent_group.add_command(self.agent_process_command)
+        self.agent_group.add_command(self.agent_generate_command)
+
+    def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        """
+        Custom help formatting that displays each command group in its own panel.
+        """
+        # First, let rich_click handle the standard parts (usage, description, options)
+        # We'll do this by temporarily removing the commands and then adding them back
+        commands_backup = self.commands.copy()
+        self.commands = {}
+
+        # Let the parent class format the basic help (usage, description, options)
+        super(CLI, self).format_help(ctx, formatter)
+
+        # Restore the commands
+        self.commands = commands_backup
+
+        # Now add our custom command groups display
+        console = Console()
+
+        # Collect command groups (skip regular commands if any)
+        command_groups = {}
+        for name, cmd in self.commands.items():
+            if isinstance(cmd, click.Group):
+                command_groups[name] = cmd
+
+        # Display the command groups using our custom rich display
+        if command_groups:
+            rich_display = RichCommandGroups(command_groups)
+            console.print(rich_display)
 
     ## == METADATA COMMAND GROUP ==
     # This command group is used to manage the metadata.yml file both locally and on the remote server 
@@ -656,6 +728,77 @@ class CLI(click.RichGroup):
         click.secho('✅ datasets uploaded', fg='green')
         click.secho()
 
+    ## == AGENT COMMAND GROUP ==
+    # Commands to interact with the opencode-powered agent workflow.
+
+    @click.group('agent', help='Commands for running the LLM dataset discovery agent.')
+    @click.pass_obj
+    def agent_group(self,
+                    ) -> None:
+        """
+        This command group exposes utilities to run the opencode agent that discovers dataset download
+        links from publication URLs.
+        """
+        pass
+
+    @click.command('process', short_help='Find dataset download links for a publication URL.')
+    @click.argument('link', type=str)
+    @click.pass_obj
+    def agent_process_command(self,
+                              link: str,
+                              ) -> None:
+        """
+        Runs the dataset discovery agent on the provided publication URL and downloads
+        all discovered files.
+
+        :param link: Publication link that should be processed
+        """
+        from chem_mat_data.agent.extraction_agent import discover_and_download
+
+        try:
+            discovery, downloaded_paths = discover_and_download(link)
+        except Exception as exc:
+            click.secho(f'❌ agent run failed: {exc}', fg='red')
+            sys.exit(1)
+
+        click.secho('✅ agent run finished', fg='green')
+        click.echo(f'Publication: {discovery.publication_url}')
+        if discovery.download_links:
+            click.echo('Download links:')
+            for item in discovery.download_links:
+                click.echo(f' - {item}')
+        else:
+            click.echo('Download links: none')
+        if discovery.notes:
+            click.echo(f'Notes: {discovery.notes}')
+
+        if downloaded_paths:
+            click.echo('Downloaded files:')
+            for path in downloaded_paths:
+                click.echo(f' - {path}')
+
+    @click.command('generate', short_help='Generate a processing script for the downloaded dataset.')
+    @click.pass_obj
+    def agent_generate_command(self,
+                               ) -> None:
+        """
+        Generates a dataset processing script based on the downloaded dataset in
+        ``agent/artifacts/downloads`` and saves it to ``agent/artifacts/scripts``.
+        """
+        from chem_mat_data.agent.extraction_agent import generate_processing_script
+
+        try:
+            script_path = generate_processing_script()
+        except FileNotFoundError as exc:
+            click.secho(f'❌ agent generate failed: {exc}', fg='red')
+            sys.exit(1)
+        except Exception as exc:
+            click.secho(f'❌ agent generate failed: {exc}', fg='red')
+            sys.exit(1)
+
+        click.secho('✅ script generation finished', fg='green')
+        click.echo(f'Generated script: {script_path}')
+
     ## == DOCS COMMAND GROUP ==
     # This command group is used to manage the documentation of the package.
     
@@ -727,119 +870,7 @@ class CLI(click.RichGroup):
             file.write(content)
         
         click.secho('✅ datasets overview written to file', fg='green')
-        click.secho('')
-
-    ## == AGENT COMMAND GROUP ==
-    # Commands for interacting with the coding agent helpers.
-    
-    @click.group('agent', help='Commands for interacting with the coding agent.')
-    @click.pass_obj
-    def agent_group(self,
-                    ) -> None:
-        """
-        This command group bundles helper commands for communicating with the AI coding agent.
-        """
-        pass
-
-    @click.command('process_link', short_help='Find dataset download links for a publication.')
-    @click.argument('publication_url', type=str)
-    @click.option(
-        '--output',
-        'output_path',
-        type=click.Path(dir_okay=False, writable=True, resolve_path=True),
-        default=None,
-        help='Path to store the discovered download links JSON.',
-    )
-    @click.pass_obj
-    def agent_process_link_command(self,
-                                   publication_url: str,
-                                   output_path: Optional[str],
-                                   ) -> None:
-        """
-        Runs the first agent prompt to discover dataset download links for ``publication_url``.
-
-        :param publication_url: The URL of the publication that releases the dataset.
-        :param output_path: Optional path where the discovered links JSON will be written.
-        """
-        try:
-            result = discover_links(publication_url)
-            saved_path = result.save(output_path)
-        except Exception as exc:
-            raise click.ClickException(str(exc)) from exc
-
-        click.echo('Download links:')
-        if result.download_links:
-            for link in result.download_links:
-                click.echo(f'- {link}')
-        else:
-            click.echo('- none found')
-
-        if result.notes:
-            click.echo(f'Notes: {result.notes}')
-
-        click.echo(f'Saved to: {saved_path}')
-
-    @click.command('generate_script', short_help='Generate a dataset script from saved download links.')
-    @click.option(
-        '--links-path',
-        type=click.Path(dir_okay=False, readable=True, resolve_path=True),
-        default=None,
-        help=f'Path to the JSON produced by agent process. Defaults to {DEFAULT_LINKS_PATH}.',
-    )
-    @click.option(
-        '--output',
-        'output_path',
-        type=click.Path(dir_okay=False, writable=True, resolve_path=True),
-        default=None,
-        help=f'Path to write the generated script. Defaults to {DEFAULT_SCRIPT_PATH}.',
-    )
-    @click.option(
-        '--publication-url',
-        type=str,
-        default=None,
-        help='Optional publication URL override for the script prompt.',
-    )
-    @click.option(
-        '--mcp-endpoint',
-        type=str,
-        default=None,
-        help='Optional MCP file server endpoint to mention in the prompt.',
-    )
-    @click.pass_obj
-    def agent_generate_script_command(self,
-                                      links_path: Optional[str],
-                                      output_path: Optional[str],
-                                      publication_url: Optional[str],
-                                      mcp_endpoint: Optional[str],
-                                      ) -> None:
-        """
-        Runs the second agent prompt to generate a dataset conversion script using stored links.
-
-        :param links_path: Optional path to the stored download links JSON file.
-        :param output_path: Optional path for the generated script file.
-        :param publication_url: Optional publication URL to provide context for the script.
-        :param mcp_endpoint: Optional MCP file server endpoint for file inspection.
-        """
-        try:
-            link_result = load_links(links_path)
-        except Exception as exc:
-            raise click.ClickException(str(exc)) from exc
-
-        if not link_result.download_links:
-            raise click.ClickException('No download links available to generate a script.')
-
-        publication = publication_url or link_result.publication_url or None
-        try:
-            script_result = generate_script_from_links(
-                link_result.download_links,
-                publication_url=publication,
-                mcp_endpoint=mcp_endpoint,
-                output_path=output_path,
-            )
-        except Exception as exc:
-            raise click.ClickException(str(exc)) from exc
-
-        click.echo(f'Generated script written to: {script_result.output_path}')
+        click.secho('') 
 
 
 @click.group(cls=CLI)
@@ -877,4 +908,4 @@ def cli(ctx: Any,
 
 
 if __name__ == "__main__":
-    cli()  # pragma: no cover
+    cli()  # pragma: no cover 
