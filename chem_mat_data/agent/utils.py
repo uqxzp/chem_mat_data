@@ -1,6 +1,7 @@
 import mimetypes
 import os
 import re
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
@@ -10,17 +11,33 @@ def download_file(url, output_folder):
         response = requests.get(url, stream=True)
         response.raise_for_status()
 
-        # file name
         filename = None
         if "Content-Disposition" in response.headers:
             content_disposition = response.headers["Content-Disposition"]
             filenames = re.findall('filename="?([^"]+)"?', content_disposition)
             if filenames:
                 filename = filenames[0]
-        if not filename:
-            filename = "downloaded_file"
 
-        # ensure file extension
+        parsed_url = urlparse(url)
+        url_basename = os.path.basename(unquote(parsed_url.path))
+        if not filename:
+            filename = url_basename or "downloaded_file"
+
+        name, ext = os.path.splitext(filename)
+        if not ext:
+            url_name, url_ext = os.path.splitext(url_basename)
+            if url_ext:
+                filename = f"{name or url_name}{url_ext}"
+            else:
+                query = parse_qs(parsed_url.query)
+                for key in ("filename", "file", "name"):
+                    if key in query and query[key]:
+                        candidate = os.path.basename(unquote(query[key][0]))
+                        candidate_name, candidate_ext = os.path.splitext(candidate)
+                        if candidate_ext:
+                            filename = f"{name or candidate_name}{candidate_ext}"
+                            break
+
         name, ext = os.path.splitext(filename)
         if not ext:
             content_type = response.headers.get("Content-Type", "").split(";")[0]
@@ -28,7 +45,6 @@ def download_file(url, output_folder):
             if extension:
                 filename = f"{name}{extension}"
 
-        # download file
         full_output_path = os.path.join(output_folder, filename)
         os.makedirs(output_folder, exist_ok=True)
 

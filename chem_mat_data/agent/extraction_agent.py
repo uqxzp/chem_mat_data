@@ -17,12 +17,15 @@ ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOADS_DIR = ARTIFACTS_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 LINKS_PATH: Path = ARTIFACTS_DIR / "download_links.json"
+
+
 LINK_PROMPT: str = """
 You are a research assistant who specializes in chemistry and materials science datasets.
 Given the URL of a publication, find direct download URLs for the dataset released with the paper.
-Look for supplementary information, GitHub/Zenodo/Figshare/OSF releases, institutional or lab
-repositories, or any other location that hosts the dataset. Only keep links that directly download
-files or archives containing molecular structure data (SMILES, XYZ, or archives of those).
+Look for supplementary information and materials, GitHub/Zenodo/Figshare/OSF releases, institutional or lab repositories, or any other location that hosts the dataset.
+Only keep links that directly download files or archives containing molecular structure data (SMILES, XYZ, or archives of those).
+If the dataset is available in multiple formats, prefer tabular formats such as .xlsx or .csv over other formats.
+Ignore datasets that are only available as PDB or CIF files; treat these cases as if no dataset was found.
 
 Return a pure JSON object with this shape and nothing else:
 {

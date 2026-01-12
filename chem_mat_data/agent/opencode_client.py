@@ -50,7 +50,51 @@ def send_message(message: str) -> str:
 
 
 def extract_text(data: dict[str, Any]) -> str:
-    for part in data.get("parts", []):
-        if isinstance(part, dict) and part.get("type") == "text":
-            return part.get("text")
+    def extract_from_parts(parts: Any) -> str:
+        if not isinstance(parts, list):
+            return ""
+        texts = []
+        for part in parts:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text = part.get("text")
+                if isinstance(text, str) and text:
+                    texts.append(text)
+        return "".join(texts)
+
+    text = extract_from_parts(data.get("parts"))
+    if text:
+        return text
+
+    message = data.get("message")
+    if isinstance(message, dict):
+        text = extract_from_parts(message.get("parts"))
+        if text:
+            return text
+
+    messages = data.get("messages")
+    if isinstance(messages, list):
+        for msg in reversed(messages):
+            if isinstance(msg, dict):
+                text = extract_from_parts(msg.get("parts"))
+                if text:
+                    return text
+
+    content = data.get("content")
+    if isinstance(content, str) and content:
+        return content
+
+    choices = data.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            choice_message = choice.get("message") or choice.get("delta")
+            if isinstance(choice_message, dict):
+                content = choice_message.get("content")
+                if isinstance(content, str) and content:
+                    return content
+            content = choice.get("content")
+            if isinstance(content, str) and content:
+                return content
+
     return ""
