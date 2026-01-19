@@ -22,14 +22,18 @@ LINKS_PATH: Path = ARTIFACTS_DIR / "download_links.json"
 LINK_PROMPT: str = """
 You are a research assistant who specializes in chemistry and materials science datasets.
 Given the URL of a publication, find direct download URLs for the dataset released with the paper.
-Look for supplementary information and materials, GitHub/Zenodo/Figshare/OSF releases, institutional or lab repositories, or any other location that hosts the dataset.
+Return only direct file or archive download links that trigger a download immediately in a browser (i.e., a link that starts a file download dialog).
+Do NOT return publication pages, landing pages, dataset home pages, or supplementary information pages unless they are direct file downloads.
+Look for supporting information, supplementary information and materials, GitHub/Zenodo/Figshare/OSF releases, institutional or lab repositories, or any other location that hosts the dataset.
 Only keep links that directly download files or archives containing molecular structure data (SMILES, XYZ, or archives of those).
 If the dataset is available in multiple formats, prefer tabular formats such as .xlsx or .csv over other formats.
 Ignore datasets that are only available as PDB or CIF files; treat these cases as if no dataset was found.
+Do not ask for permissions or mention access limitations. Assume you are allowed to fetch any needed pages.
 
 Return a pure JSON object with this shape and nothing else:
 {
-  "download_links": ["https://direct-download-1", "..."]
+  "download_links": ["https://direct-download-1", "..."],
+  "notes": "..."
 }
 
 If no dataset links are available, respond with an empty list for "download_links" and explain
@@ -39,7 +43,7 @@ briefly in "notes" what you checked.
 # script generation
 SCRIPTS_ARTIFACTS_DIR: Path = ARTIFACTS_DIR / "scripts"
 SCRIPTS_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-EXAMPLE_SCRIPTS_DIR: Path = Path(__file__).resolve().parents[1] / "scripts"
+EXAMPLE_SCRIPTS_DIR: Path = Path(__file__).resolve().parent / "example_scripts"
 BASE_TEMPLATE_PATH: Path = (
     Path(__file__).resolve().parents[1] / "scripts" / "create_graph_datasets.py"
 )
@@ -84,7 +88,7 @@ class LinkDiscoveryResult:
 
 def discover_links(publication_url: str) -> LinkDiscoveryResult:
     prompt_with_link = f"{LINK_PROMPT}\n\nPublication: {publication_url}"
-    raw_response = send_message(prompt_with_link)
+    raw_response = send_message(prompt_with_link, 120)
     result = parse_link_response(raw_response, publication_url)
     return result
 
@@ -100,10 +104,34 @@ def parse_link_response(raw_response: str, publication_url: str) -> LinkDiscover
 
 
 def parse_links_from_json(raw_response: str) -> tuple[list[str], str]:
-    payload = json.loads(raw_response)
+    payload = coerce_json_payload(raw_response)
     links = [str(link).strip() for link in payload.get("download_links", [])]
     notes = str(payload.get("notes", ""))
     return links, notes
+
+
+def coerce_json_payload(raw_response: str) -> dict:
+    """
+    Returns the first JSON object found in the LLM response.
+
+    :param raw_response: raw LLM response string
+    :returns: Parsed JSON object
+    :raises ValueError: If no JSON object can be parsed
+    """
+    cleaned = raw_response.strip()
+    if cleaned:
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid JSON response from the LLM.") from exc
+    raise ValueError("Invalid JSON response from the LLM.")
 
 
 def discover_and_download(
@@ -112,6 +140,8 @@ def discover_and_download(
     discovery = discover_links(publication_url)
     discovery.save()
     if not discovery.download_links:
+        if discovery.notes.strip():
+            print(f"Notes: {discovery.notes}")
         raise ValueError("No download links found")
 
     downloaded_paths: list[Path] = []
@@ -134,7 +164,7 @@ def generate_processing_script() -> Path:
         example_scripts_dir=EXAMPLE_SCRIPTS_DIR,
         base_template_path=BASE_TEMPLATE_PATH,
     )
-    response = send_message(prompt)
+    response = send_message(prompt, 300)
 
     target_name = f"{dataset_path.stem}_generated.py"
     target_path = SCRIPTS_ARTIFACTS_DIR / target_name

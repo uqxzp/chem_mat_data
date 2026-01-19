@@ -7,7 +7,7 @@ import httpx
 from opencode_ai import Opencode
 
 
-def send_message(message: str) -> str:
+def send_message(message: str, custom_timeout: int) -> str:
     client = Opencode()
     config = client.config.get()
     model_ref = getattr(config, "model", None)
@@ -18,7 +18,7 @@ def send_message(message: str) -> str:
     session_resp = client._client.post(
         "/session",
         json={},
-        timeout=httpx.Timeout(120.0),
+        timeout=httpx.Timeout(15.0), # timeout for session creation
         headers={"Content-Type": "application/json"},
     )
     session_resp.raise_for_status()  # raises HTTPStatusError for bad session
@@ -38,13 +38,17 @@ def send_message(message: str) -> str:
         ],
     }
 
-    response = client._client.post(
-        f"/session/{session_id}/message",
-        json=payload,
-        timeout=httpx.Timeout(300.0),
-        headers={"Content-Type": "application/json"},
-    )
-    response.raise_for_status()
+    try:
+        response = client._client.post(
+            f"/session/{session_id}/message",
+            json=payload,
+            timeout=httpx.Timeout(custom_timeout),  # timeout for LLM doing stuff
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+    except httpx.TimeoutException:
+        abort_session(client, session_id)
+        raise
     body = response.json()
     return extract_text(body)
 
@@ -98,3 +102,22 @@ def extract_text(data: dict[str, Any]) -> str:
                 return content
 
     return ""
+
+
+def abort_session(client: Opencode, session_id: str) -> None:
+    """
+    Aborts a running OpenCode session.
+
+    :param client: OpenCode client instance to use for the request
+    :param session_id: Identifier of the session to abort
+    """
+    try:
+        response = client._client.post(
+            f"/session/{session_id}/abort",
+            json={},
+            timeout=httpx.Timeout(10.0),
+            headers={"Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
