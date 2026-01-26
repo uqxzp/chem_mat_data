@@ -14,7 +14,7 @@ function uniqKeepOrder(items: string[]) {
 }
 
 function extractUrls(text: string) {
-  // Good-enough URL extractor for markdown/html-ish text
+  // URL extractor for markdown/html-ish text
   const re = /\bhttps?:\/\/[^\s<>()\]]+/g;
   const matches = text.match(re) ?? [];
   // strip trailing punctuation that often sticks in markdown
@@ -81,7 +81,7 @@ function evidenceSnippets(md: string) {
     const line = lines[i];
     const low = line.toLowerCase();
     if (needles.some(n => low.includes(n))) {
-      // include a tiny context window (prev/current/next)
+      // include tiny context window
       const prev = lines[i - 1] ?? "";
       const next = lines[i + 1] ?? "";
       const block = [prev, line, next].filter(Boolean).join("\n");
