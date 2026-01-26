@@ -23,6 +23,8 @@ LINK_PROMPT: str = """
 You are a research assistant who specializes in chemistry and materials science datasets.
 Given the URL of a publication, find direct download URLs for the dataset released with the paper.
 Return only direct file or archive download links that trigger a download immediately in a browser (i.e., a link that starts a file download dialog).
+When you need to read a webpage (papers, publisher pages, Figshare/Zenodo/OSF/GitHub, supplemental pages), always use the `crawlfetch` tool instead of `webfetch`.
+Use `crawlfetch` first on the publication URL, then extract candidate dataset links from the returned markdown.
 Do NOT return publication pages, landing pages, dataset home pages, or supplementary information pages unless they are direct file downloads.
 Look for supporting information, supplementary information and materials, GitHub/Zenodo/Figshare/OSF releases, institutional or lab repositories, or any other location that hosts the dataset.
 Only keep links that directly download files or archives containing molecular structure data (SMILES, XYZ, or archives of those).
@@ -179,4 +181,4 @@ def get_downloaded_file() -> Path:
     for path in sorted(DOWNLOADS_DIR.rglob("*")):
         if path.is_file():
             return path
-    raise FileNotFoundError(f"No files in {DOWNLOADS_DIR}")
+    raise FileNotFoundError(f"No files in {DOWNLOADS_DIR}") 
