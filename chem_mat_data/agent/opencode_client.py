@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -7,7 +9,7 @@ import httpx
 from opencode_ai import Opencode
 
 
-def send_message(message: str, custom_timeout: int) -> str:
+def send_message(message: str, timeout: int, agent: str | None = None) -> str:
     client = Opencode()
     config = client.config.get()
     model_ref = getattr(config, "model", None)
@@ -18,7 +20,7 @@ def send_message(message: str, custom_timeout: int) -> str:
     session_resp = client._client.post(
         "/session",
         json={},
-        timeout=httpx.Timeout(15.0), # timeout for session creation
+        timeout=httpx.Timeout(15.0),  # timeout for session creation
         headers={"Content-Type": "application/json"},
     )
     session_resp.raise_for_status()  # raises HTTPStatusError for bad session
@@ -38,11 +40,14 @@ def send_message(message: str, custom_timeout: int) -> str:
         ],
     }
 
+    if agent is not None:
+        payload["agent"] = agent
+
     try:
         response = client._client.post(
             f"/session/{session_id}/message",
             json=payload,
-            timeout=httpx.Timeout(custom_timeout),  # timeout for LLM doing stuff
+            timeout=httpx.Timeout(timeout),  # timeout for LLM doing stuff
             headers={"Content-Type": "application/json"},
         )
         response.raise_for_status()

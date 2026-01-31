@@ -21,25 +21,22 @@ LINKS_PATH: Path = ARTIFACTS_DIR / "download_links.json"
 
 LINK_PROMPT: str = """
 You are a research assistant who specializes in chemistry and materials science datasets.
-Given the URL of a publication, find direct download URLs for the dataset released with the paper.
+Given the URL of a publication, find the direct download URL(s) for the molecular dataset released with the paper.
 Return only direct file or archive download links that trigger a download immediately in a browser (i.e., a link that starts a file download dialog).
-When you need to read a webpage (papers, publisher pages, Figshare/Zenodo/OSF/GitHub, supplemental pages), always use the `crawlfetch` tool instead of `webfetch`.
-Use `crawlfetch` first on the publication URL, then extract candidate dataset links from the returned markdown.
 Do NOT return publication pages, landing pages, dataset home pages, or supplementary information pages unless they are direct file downloads.
 Look for supporting information, supplementary information and materials, GitHub/Zenodo/Figshare/OSF releases, institutional or lab repositories, or any other location that hosts the dataset.
-Only keep links that directly download files or archives containing molecular structure data (SMILES, XYZ, or archives of those).
 If the dataset is available in multiple formats, prefer tabular formats such as .xlsx or .csv over other formats.
-Ignore datasets that are only available as PDB or CIF files; treat these cases as if no dataset was found.
-Do not ask for permissions or mention access limitations. Assume you are allowed to fetch any needed pages.
+Ignore datasets that are PDB or CIF files; treat these cases as if no dataset was found.
+Do not ask for permissions or mention access limitations. You are allowed to fetch any needed pages.
+When you need to read a webpage (papers, publisher pages, Figshare/Zenodo/OSF/GitHub, supplemental pages), always use the `crawlfetch` tool instead of `webfetch`.
+If you found the dataset links, leave "notes" as an empty string.
+If you didn't find dataset links, respond with an empty list for "download_links" and explain in 1-2 sentences in "notes" what you checked.
 
 Return a pure JSON object with this shape and nothing else:
 {
   "download_links": ["https://direct-download-1", "..."],
   "notes": "..."
 }
-
-If no dataset links are available, respond with an empty list for "download_links" and explain
-briefly in "notes" what you checked.
 """
 
 # script generation
@@ -63,6 +60,8 @@ Goal:
 - Extend the base experiment at {base_template_path} using its absolute path (e.g., Experiment.extend(str({base_template_path}))) so the script runs without missing-path errors.
 - The script should be ready to run locally against the downloaded data.
 - Return only the complete Python script content; do not wrap it in markdown fences or add prose.
+
+Note: Once you have a script with working code, you may review it once and only once. Then you must respond. Do not keep reviewing. There is a strict time limit of 3 minutes. Once it is reached, your response will no longer be accepted! Therefore I repeat, do not keep reviewing once you have working code!
 """
 
 
@@ -89,8 +88,8 @@ class LinkDiscoveryResult:
 
 
 def discover_links(publication_url: str) -> LinkDiscoveryResult:
-    prompt_with_link = f"{LINK_PROMPT}\n\nPublication: {publication_url}"
-    raw_response = send_message(prompt_with_link, 120)
+    prompt_with_link = f"{LINK_PROMPT}\n\Here is the link to the publication: {publication_url}"
+    raw_response = send_message(prompt_with_link, timeout=180, agent="dataset-links")
     result = parse_link_response(raw_response, publication_url)
     return result
 
@@ -132,7 +131,9 @@ def coerce_json_payload(raw_response: str) -> dict:
         try:
             return json.loads(cleaned[start : end + 1])
         except json.JSONDecodeError as exc:
+            print(raw_response)
             raise ValueError("Invalid JSON response from the LLM.") from exc
+    print(raw_response)
     raise ValueError("Invalid JSON response from the LLM.")
 
 
@@ -160,16 +161,40 @@ def discover_and_download(
 
 
 def generate_processing_script() -> Path:
+    """
+    Generates a dataset processing script for the first downloaded dataset.
+
+    :returns: Path to the generated script
+    :raises FileNotFoundError: If no downloaded file exists
+    """
     dataset_path = get_downloaded_file()
+    return generate_processing_script_for_dataset(dataset_path)
+
+def generate_processing_script_for_dataset(dataset_path: Path,
+                                           target_dir: Path | None = None,
+                                           ) -> Path:
+    """
+    Generates a dataset processing script for the provided dataset path.
+
+    :param dataset_path: Path to the dataset file or archive
+    :param target_dir: Optional target directory for generated scripts
+    :returns: Path to the generated script
+    :raises FileNotFoundError: If the dataset path does not exist
+    """
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+
     prompt = SCRIPT_GENERATION_PROMPT.format(
         dataset_path=dataset_path,
         example_scripts_dir=EXAMPLE_SCRIPTS_DIR,
         base_template_path=BASE_TEMPLATE_PATH,
     )
-    response = send_message(prompt, 300)
+    response = send_message(prompt, 180)
 
+    output_dir = target_dir or SCRIPTS_ARTIFACTS_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
     target_name = f"{dataset_path.stem}_generated.py"
-    target_path = SCRIPTS_ARTIFACTS_DIR / target_name
+    target_path = output_dir / target_name
     with target_path.open("w", encoding="utf-8") as f:
         f.write(response)
 
@@ -177,8 +202,14 @@ def generate_processing_script() -> Path:
 
 
 def get_downloaded_file() -> Path:
+    """
+    Returns the first downloaded file from the downloads artifacts folder.
+
+    :returns: Path to the downloaded file
+    :raises FileNotFoundError: If no files exist in the downloads folder
+    """
     # returns first file in folder; for now assumes there is only one
     for path in sorted(DOWNLOADS_DIR.rglob("*")):
         if path.is_file():
             return path
-    raise FileNotFoundError(f"No files in {DOWNLOADS_DIR}") 
+    raise FileNotFoundError(f"No files in {DOWNLOADS_DIR}")
