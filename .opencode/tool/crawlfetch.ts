@@ -1,5 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 
+const blockedHosts = new Map<string, number>(); // host -> times blocked this run/process
+
 function uniqKeepOrder(items: string[]) {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -14,17 +16,47 @@ function uniqKeepOrder(items: string[]) {
 }
 
 function extractUrls(text: string) {
-  // URL extractor for markdown/html-ish text
   const re = /\bhttps?:\/\/[^\s<>()\]]+/g;
   const matches = text.match(re) ?? [];
-  // strip trailing punctuation that often sticks in markdown
   return uniqKeepOrder(matches.map(u => u.replace(/[),.;\]]+$/g, "")));
+}
+
+function getHost(rawUrl: string) {
+  try {
+    return new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function detectHumanVerification(md: string) {
+  const low = md.toLowerCase();
+  const markers = [
+    "verifying you are human",
+    "verification required",
+    "checking your browser",
+    "just a moment",
+    "enable javascript and cookies",
+    "cloudflare",
+    "captcha",
+    "/cdn-cgi/",
+    "cf-chl",
+    "challenge-platform",
+  ];
+
+  const hits = markers.filter(m => low.includes(m));
+  const blocked = hits.length > 0;
+
+  return {
+    blocked,
+    reason: blocked ? "human_verification_interstitial" : "",
+    hits,
+  };
 }
 
 function scoreUrl(u: string) {
   const s = u.toLowerCase();
 
-  // Repository / dataset hosts
   const hostBoost =
     (s.includes("figshare.com") ? 50 : 0) +
     (s.includes("zenodo.org") ? 50 : 0) +
@@ -35,8 +67,7 @@ function scoreUrl(u: string) {
     (s.includes("huggingface.co") ? 20 : 0) +
     (s.includes("drive.google.com") ? 15 : 0) +
     (s.includes("dropbox.com") ? 15 : 0);
-
-  // Strong “this is the data” signals
+    
   const intentBoost =
     (s.includes("supplement") || s.includes("supporting") || s.includes("si") ? 18 : 0) +
     (s.includes("download") ? 16 : 0) +
@@ -47,7 +78,6 @@ function scoreUrl(u: string) {
     (s.includes(".xlsx") ? 6 : 0) +
     (s.includes(".pdf") ? 2 : 0);
 
-  // Mild penalty for “not data”
   const penalty =
     (s.includes("twitter.com") || s.includes("x.com") ? 40 : 0) +
     (s.includes("facebook.com") ? 40 : 0) +
@@ -81,7 +111,6 @@ function evidenceSnippets(md: string) {
     const line = lines[i];
     const low = line.toLowerCase();
     if (needles.some(n => low.includes(n))) {
-      // include tiny context window
       const prev = lines[i - 1] ?? "";
       const next = lines[i + 1] ?? "";
       const block = [prev, line, next].filter(Boolean).join("\n");
@@ -90,6 +119,11 @@ function evidenceSnippets(md: string) {
     }
   }
   return uniqKeepOrder(out);
+}
+
+function truncate(s: string, n: number) {
+  if (s.length <= n) return s;
+  return s.slice(0, n) + `\n\n---\n[truncated] Returned first ${n} chars of markdown.`;
 }
 
 export default tool({
@@ -106,9 +140,56 @@ export default tool({
     const limit = maxChars ?? 20000;
     const linkLimit = maxLinks ?? 40;
 
-    // Crawl4AI markdown
-    const mdFull = await Bun.$`crwl crawl ${url} -o markdown`.text();
+    const host = getHost(url);
+    const prevBlocks = host ? (blockedHosts.get(host) ?? 0) : 0;
 
+    // HARD GUARD: don't keep retrying a host that already blocked us
+    if (host && prevBlocks >= 1) {
+      return [
+        `# CrawlFetch result`,
+        `URL: ${url}`,
+        `HOST: ${host}`,
+        `BLOCKED_BY_HUMAN_VERIFICATION: true`,
+        `BLOCK_REASON: previously_blocked_host`,
+        ``,
+        `## Page markdown (truncated)`,
+        truncate(`Skipped crawling because this host previously returned a human-verification interstitial in this run.`, 2000),
+      ].join("\n");
+    }
+
+    let mdFull = "";
+    try {
+      mdFull = await Bun.$`crwl crawl ${url} -o markdown`.text();
+    } catch (err: any) {
+      const msg = (err && (err.message || String(err))) || "Unknown error";
+      return [
+        `# CrawlFetch result`,
+        `URL: ${url}`,
+        host ? `HOST: ${host}` : ``,
+        `ERROR: true`,
+        `ERROR_MESSAGE: ${msg}`,
+      ].filter(Boolean).join("\n");
+    }
+
+    // Detect Cloudflare/CAPTCHA/etc.
+    const block = detectHumanVerification(mdFull);
+    if (block.blocked) {
+      if (host) blockedHosts.set(host, prevBlocks + 1);
+
+      return [
+        `# CrawlFetch result`,
+        `URL: ${url}`,
+        host ? `HOST: ${host}` : ``,
+        `BLOCKED_BY_HUMAN_VERIFICATION: true`,
+        `BLOCK_REASON: ${block.reason}`,
+        `BLOCK_HITS: ${block.hits.join(" | ")}`,
+        ``,
+        `## Page markdown (truncated)`,
+        truncate(mdFull, Math.min(limit, 6000)),
+      ].filter(Boolean).join("\n");
+    }
+
+    // Normal behavior (your original logic)
     const urls = extractUrls(mdFull);
     const ranked = urls
       .map(u => ({ u, score: scoreUrl(u) }))
@@ -116,10 +197,7 @@ export default tool({
       .slice(0, linkLimit);
 
     const evid = evidenceSnippets(mdFull);
-
-    const md = mdFull.length > limit
-      ? mdFull.slice(0, limit) + `\n\n---\n[truncated] Returned first ${limit} chars of markdown.`
-      : mdFull;
+    const md = truncate(mdFull, limit);
 
     const topLinksText = ranked.length
       ? ranked.map(x => `- (${x.score}) ${x.u}`).join("\n")
