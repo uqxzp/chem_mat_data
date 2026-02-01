@@ -3,12 +3,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
 
 from chem_mat_data.agent.opencode_client import send_message
-from chem_mat_data.agent.utils import download_file
-
-# TODO: limit processing to smiles/xyz
 
 ARTIFACTS_DIR: Path = Path(__file__).resolve().parent / "artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -17,27 +13,49 @@ ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 DOWNLOADS_DIR = ARTIFACTS_DIR / "downloads"
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 LINKS_PATH: Path = ARTIFACTS_DIR / "download_links.json"
-
-
 LINK_PROMPT: str = """
-You are a research assistant who specializes in chemistry and materials science datasets.
-Given the URL of a publication, find the direct download URL(s) for the molecular dataset released with the paper.
-Return only direct file or archive download links that trigger a download immediately in a browser (i.e., a link that starts a file download dialog).
-Do NOT return publication pages, landing pages, dataset home pages, or supplementary information pages unless they are direct file downloads.
-Look for supporting information, supplementary information and materials, GitHub/Zenodo/Figshare/OSF releases, institutional or lab repositories, or any other location that hosts the dataset.
-If the dataset is available in multiple formats, prefer tabular formats such as .xlsx or .csv over other formats.
-Ignore datasets that are PDB or CIF files; treat these cases as if no dataset was found.
-Do not ask for permissions or mention access limitations. You are allowed to fetch any needed pages.
-When you need to read a webpage (papers, publisher pages, Figshare/Zenodo/OSF/GitHub, supplemental pages), always use the `crawlfetch` tool instead of `webfetch`.
-If you found the dataset links, leave "notes" as an empty string.
-If you didn't find dataset links, respond with an empty list for "download_links" and explain in 1-2 sentences in "notes" what you checked.
+You are a research assistant specializing in chemistry and materials science datasets.
 
-Return a pure JSON object with this shape and nothing else:
+Goal:
+Given a publication URL, find the direct download URL(s) for the molecular dataset released with the paper.
+
+Return ONLY a single JSON object (no prose/markdown) with exactly:
 {
   "download_links": ["https://direct-download-1", "..."],
+  "downloaded_files": ["chem_mat_data/agent/artifacts/downloads/FILE1", "..."],
   "notes": "..."
 }
+
+Rules:
+- Return ONLY direct file/archive download URLs that immediately trigger a browser download.
+- Do NOT return publication/landing/home/supplement pages unless they are direct file downloads.
+- Search supporting/supplementary materials and external repositories (GitHub/Zenodo/Figshare/OSF), institutional/lab repos, or any other linked host.
+- Ignore PDB/CIF datasets (treat as not found).
+
+Selecting what to download (avoid duplicates):
+- Download the dataset only ONCE per representation (do NOT download the same dataset again in different formats).
+- If the dataset is available in multiple formats, always prefer tabular files (.csv/.tsv/.xlsx) over archives (.zip/.tar.gz). If a tabular file exists, do NOT download an archive that appears to bundle the same data.
+- Download multiple files only if they are distinct non-overlapping parts of the dataset (e.g., split tables/parts), not alternate formats.
+
+Tool use:
+- Do not ask for permissions or mention access limitations. You are allowed to fetch any needed pages.
+- When reading any webpage, ALWAYS use `crawlfetch` (NOT `webfetch`).
+
+Downloading (MCP tool):
+- After identifying the best dataset file(s), download them using `file_downloader_download_file` with args: `url` (required), `filename` (required), `use_browser` (optional).
+- Save ONLY inside `chem_mat_data/agent/artifacts/downloads` and never outside it.
+- Choose a clear filename based on dataset name + format (e.g., `AqSolDB.csv`).
+- "downloaded_files" MUST contain the exact `filename` values used, in the same order as "download_links" (1:1 correspondence).
+- Always pass `filename` as an ABSOLUTE path (not relative).
+- "downloaded_files" MUST contain the exact local `filename` paths used in the tool call (not URLs).
+- "download_links" and "downloaded_files" must have the same length and correspond by index.
+
+Notes:
+- If you found dataset links and downloaded them, set "notes" to "".
+- If you found no dataset links, set "download_links" and "downloaded_files" to [] and set "notes" to 1–2 sentences describing what you checked.
 """
+
+
 
 # script generation
 SCRIPTS_ARTIFACTS_DIR: Path = ARTIFACTS_DIR / "scripts"
@@ -88,7 +106,9 @@ class LinkDiscoveryResult:
 
 
 def discover_links(publication_url: str) -> LinkDiscoveryResult:
-    prompt_with_link = f"{LINK_PROMPT}\n\Here is the link to the publication: {publication_url}"
+    prompt_with_link = (
+        f"{LINK_PROMPT}\n\nHere is the link to the publication: {publication_url}"
+    )
     raw_response = send_message(prompt_with_link, timeout=180, agent="dataset-links")
     result = parse_link_response(raw_response, publication_url)
     return result
@@ -112,13 +132,6 @@ def parse_links_from_json(raw_response: str) -> tuple[list[str], str]:
 
 
 def coerce_json_payload(raw_response: str) -> dict:
-    """
-    Returns the first JSON object found in the LLM response.
-
-    :param raw_response: raw LLM response string
-    :returns: Parsed JSON object
-    :raises ValueError: If no JSON object can be parsed
-    """
     cleaned = raw_response.strip()
     if cleaned:
         try:
@@ -147,12 +160,10 @@ def discover_and_download(
             print(f"Notes: {discovery.notes}")
         raise ValueError("No download links found")
 
-    downloaded_paths: list[Path] = []
-    for link in discovery.download_links:
-        filename = Path(urlparse(link).path).name or "downloaded_dataset"
-        target_path = DOWNLOADS_DIR / filename
-        download_file(link, str(target_path))
-        downloaded_paths.append(target_path)
+    downloaded_paths = [Path(p) for p in discovery.download_links]
+
+    if not downloaded_paths:
+        raise ValueError("Agent returned download_links but not downloaded_files.")
 
     return discovery, downloaded_paths
 
@@ -170,9 +181,11 @@ def generate_processing_script() -> Path:
     dataset_path = get_downloaded_file()
     return generate_processing_script_for_dataset(dataset_path)
 
-def generate_processing_script_for_dataset(dataset_path: Path,
-                                           target_dir: Path | None = None,
-                                           ) -> Path:
+
+def generate_processing_script_for_dataset(
+    dataset_path: Path,
+    target_dir: Path | None = None,
+) -> Path:
     """
     Generates a dataset processing script for the provided dataset path.
 
