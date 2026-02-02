@@ -756,26 +756,12 @@ class CLI(click.RichGroup):
         from chem_mat_data.agent.extraction_agent import discover_and_download
 
         try:
-            discovery, downloaded_paths = discover_and_download(link)
+            result = discover_and_download(link)
         except Exception as exc:
             click.secho(f'❌ agent run failed: {exc}', fg='red')
-            sys.exit(1)
-
+            sys.exit(1) 
         click.secho('✅ agent run finished', fg='green')
-        click.echo(f'Publication: {discovery.publication_url}')
-        if discovery.download_links:
-            click.echo('Download links:')
-            for item in discovery.download_links:
-                click.echo(f' - {item}')
-        else:
-            click.echo('Download links: none')
-        if discovery.notes:
-            click.echo(f'Notes: {discovery.notes}')
-
-        if downloaded_paths:
-            click.echo('Downloaded files:')
-            for path in downloaded_paths:
-                click.echo(f' - {path}')
+        click.echo(f'Response: {result}')
 
     @click.command('generate', short_help='Generate a processing script for the downloaded dataset.')
     @click.pass_obj

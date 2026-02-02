@@ -10,51 +10,41 @@ ARTIFACTS_DIR: Path = Path(__file__).resolve().parent / "artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # link discovery
-DOWNLOADS_DIR = ARTIFACTS_DIR / "downloads"
+DOWNLOADS_DIR = (ARTIFACTS_DIR / "downloads").resolve()
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 LINKS_PATH: Path = ARTIFACTS_DIR / "download_links.json"
 LINK_PROMPT: str = """
 You are a research assistant specializing in chemistry and materials science datasets.
 
-Goal:
-Given a publication URL, find the direct download URL(s) for the molecular dataset released with the paper.
-
-Return ONLY a single JSON object (no prose/markdown) with exactly:
-{
-  "download_links": ["https://direct-download-1", "..."],
-  "downloaded_files": ["chem_mat_data/agent/artifacts/downloads/FILE1", "..."],
-  "notes": "..."
-}
+Goal: Given a scientific publication URL, find the download URL(s) for the molecular dataset released in the paper and download the dataset file(s).
 
 Rules:
-- Return ONLY direct file/archive download URLs that immediately trigger a browser download.
-- Do NOT return publication/landing/home/supplement pages unless they are direct file downloads.
-- Search supporting/supplementary materials and external repositories (GitHub/Zenodo/Figshare/OSF), institutional/lab repos, or any other linked host.
+- Output ONLY direct file/archive download URLs that immediately trigger a browser download.
+- Do NOT output landing/publication/supplement pages unless they are direct file downloads.
+- Search supplementary materials and external repositories (GitHub/Zenodo/Figshare/OSF/etc.) and any linked host.
 - Ignore PDB/CIF datasets (treat as not found).
 
 Selecting what to download (avoid duplicates):
-- Download the dataset only ONCE per representation (do NOT download the same dataset again in different formats).
-- If the dataset is available in multiple formats, always prefer tabular files (.csv/.tsv/.xlsx) over archives (.zip/.tar.gz). If a tabular file exists, do NOT download an archive that appears to bundle the same data.
-- Download multiple files only if they are distinct non-overlapping parts of the dataset (e.g., split tables/parts), not alternate formats.
+- Download once per representation; do NOT download the same dataset in multiple formats.
+- Prefer .csv/.tsv/.xlsx over .zip/.tar.gz; if tabular exists, do NOT download an archive bundling the same data.
+- Download multiple files only if they are distinct non-overlapping parts (not alternate formats).
 
 Tool use:
-- Do not ask for permissions or mention access limitations. You are allowed to fetch any needed pages.
-- When reading any webpage, ALWAYS use `crawlfetch` (NOT `webfetch`).
+- Use `websearch_cited` for searching.
+- When reading webpages, ALWAYS use `crawlfetch` (NOT `webfetch`).
+- Do not ask for permissions or mention limitations.
 
-Downloading (MCP tool):
-- After identifying the best dataset file(s), download them using `file_downloader_download_file` with args: `url` (required), `filename` (required), `use_browser` (optional).
-- Save ONLY inside `chem_mat_data/agent/artifacts/downloads` and never outside it.
-- Choose a clear filename based on dataset name + format (e.g., `AqSolDB.csv`).
-- "downloaded_files" MUST contain the exact `filename` values used, in the same order as "download_links" (1:1 correspondence).
-- Always pass `filename` as an ABSOLUTE path (not relative).
-- "downloaded_files" MUST contain the exact local `filename` paths used in the tool call (not URLs).
-- "download_links" and "downloaded_files" must have the same length and correspond by index.
+Downloading (MCP):
+- Download each selected file with `file_downloader_download_file` args: `url`, `filename`, optional `use_browser`.
+- Save ONLY in `{downloads_dir}`.
+- `filename` MUST be an ABSOLUTE path within `{downloads_dir}`; choose a clear dataset-based name.
 
-Notes:
-- If you found dataset links and downloaded them, set "notes" to "".
-- If you found no dataset links, set "download_links" and "downloaded_files" to [] and set "notes" to 1–2 sentences describing what you checked.
+Output (plain text ONLY):
+- If found and downloaded: print each direct download URL on its own line, then a line "Saved to:" and each absolute saved path on its own line. No extra text.
+- If not found: print "NOT FOUND" then 1–2 sentences stating what you checked.
+
+Here is the publication link: {publication_link}
 """
-
 
 
 # script generation
@@ -77,95 +67,19 @@ Goal:
 - When looking at example scripts, inspect at most 5 files that seem most similar; do not enumerate the entire directory.
 - Extend the base experiment at {base_template_path} using its absolute path (e.g., Experiment.extend(str({base_template_path}))) so the script runs without missing-path errors.
 - The script should be ready to run locally against the downloaded data.
-- Return only the complete Python script content; do not wrap it in markdown fences or add prose.
-
-Note: Once you have a script with working code, you may review it once and only once. Then you must respond. Do not keep reviewing. There is a strict time limit of 3 minutes. Once it is reached, your response will no longer be accepted! Therefore I repeat, do not keep reviewing once you have working code!
+- Return only the complete Python script content; do not wrap it in markdown fences or add prose. 
 """
 
 
-@dataclass
-class LinkDiscoveryResult:
-    # structured result for dataset download link discovery
-    publication_url: str
-    download_links: list[str]
-    notes: str
-    raw_response: str
-
-    def save(self) -> Path:
-        target = LINKS_PATH
-        payload = {
-            "publication_url": self.publication_url,
-            "download_links": self.download_links,
-            "notes": self.notes,
-            "raw_response": self.raw_response,
-        }
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
-        return target
-
-
-def discover_links(publication_url: str) -> LinkDiscoveryResult:
-    prompt_with_link = (
-        f"{LINK_PROMPT}\n\nHere is the link to the publication: {publication_url}"
+def discover_and_download(publication_url: str) -> str:
+    prompt_with_link = LINK_PROMPT.format(
+        publication_link=publication_url,
+        downloads_dir=DOWNLOADS_DIR,
     )
-    raw_response = send_message(prompt_with_link, timeout=180, agent="dataset-links")
-    result = parse_link_response(raw_response, publication_url)
-    return result
-
-
-def parse_link_response(raw_response: str, publication_url: str) -> LinkDiscoveryResult:
-    download_links, notes = parse_links_from_json(raw_response)
-    return LinkDiscoveryResult(
-        publication_url=publication_url,
-        download_links=download_links,
-        notes=notes,
-        raw_response=raw_response,
-    )
-
-
-def parse_links_from_json(raw_response: str) -> tuple[list[str], str]:
-    payload = coerce_json_payload(raw_response)
-    links = [str(link).strip() for link in payload.get("download_links", [])]
-    notes = str(payload.get("notes", ""))
-    return links, notes
-
-
-def coerce_json_payload(raw_response: str) -> dict:
-    cleaned = raw_response.strip()
-    if cleaned:
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            pass
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            return json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError as exc:
-            print(raw_response)
-            raise ValueError("Invalid JSON response from the LLM.") from exc
-    print(raw_response)
-    raise ValueError("Invalid JSON response from the LLM.")
-
-
-def discover_and_download(
-    publication_url: str,
-) -> tuple[LinkDiscoveryResult, list[Path]]:
-    discovery = discover_links(publication_url)
-    discovery.save()
-    if not discovery.download_links:
-        if discovery.notes.strip():
-            print(f"Notes: {discovery.notes}")
+    result = send_message(prompt_with_link, timeout=180, agent="dataset-links")
+    if not result:
         raise ValueError("No download links found")
-
-    downloaded_paths = [Path(p) for p in discovery.download_links]
-
-    if not downloaded_paths:
-        raise ValueError("Agent returned download_links but not downloaded_files.")
-
-    return discovery, downloaded_paths
+    return result 
 
 
 # script generation
