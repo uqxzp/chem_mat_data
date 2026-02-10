@@ -55,7 +55,8 @@ BASE_TEMPLATE_PATH: Path = (
     Path(__file__).resolve().parents[1] / "scripts" / "create_graph_datasets.py"
 )
 SCRIPT_GENERATION_PROMPT: str = """
-You are a Python developer who specializes in writing dataset processing scripts. You have file tools enabled (list, glob, read, grep). Use them to inspect the downloaded dataset file and existing scripts before writing code.
+You are a Python developer who specializes in writing dataset processing scripts. 
+You have file tools enabled (bash, read, glob, grep, list, codesearch, edit). Use them to inspect the downloaded dataset file and existing scripts in the directories mentioned below before writing code.
 
 Inputs for this task:
 - Downloaded dataset file (may be an archive with subfolders): {dataset_path}
@@ -64,7 +65,6 @@ Inputs for this task:
 
 Goal:
 - Inspect the dataset (and, if archived, its contents) and generate a processing script that follows the style and structure of the existing scripts in {example_scripts_dir}.
-- When looking at example scripts, inspect at most 5 files that seem most similar; do not enumerate the entire directory.
 - Extend the base experiment at {base_template_path} using its absolute path (e.g., Experiment.extend(str({base_template_path}))) so the script runs without missing-path errors.
 - The script should be ready to run locally against the downloaded data.
 - Return only the complete Python script content; do not wrap it in markdown fences or add prose. 
@@ -111,12 +111,12 @@ def generate_processing_script_for_dataset(
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
 
-    prompt = SCRIPT_GENERATION_PROMPT.format(
+    prompt_with_paths = SCRIPT_GENERATION_PROMPT.format(
         dataset_path=dataset_path,
         example_scripts_dir=EXAMPLE_SCRIPTS_DIR,
         base_template_path=BASE_TEMPLATE_PATH,
     )
-    response = send_message(prompt, 180)
+    response = send_message(prompt_with_paths, timeout=240, agent="script-generation")
 
     output_dir = target_dir or SCRIPTS_ARTIFACTS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
