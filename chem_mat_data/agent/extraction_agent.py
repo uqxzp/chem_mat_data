@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from pathlib import Path
 
 from chem_mat_data.agent.opencode_client import send_message
@@ -12,7 +10,6 @@ ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 # link discovery
 DOWNLOADS_DIR = (ARTIFACTS_DIR / "downloads").resolve()
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-LINKS_PATH: Path = ARTIFACTS_DIR / "download_links.json"
 LINK_PROMPT: str = """
 You are a research assistant specializing in chemistry and materials science datasets.
 
@@ -23,11 +20,13 @@ Rules:
 - Do NOT output landing/publication/supplement pages unless they are direct file downloads.
 - Search supplementary materials and external repositories (GitHub/Zenodo/Figshare/OSF/etc.) and any linked host.
 - Ignore PDB/CIF datasets (treat as not found).
+- If a README file contains dataset structure details (e.g., column names, units, field meanings, split definitions), download it as well.
 
 Selecting what to download (avoid duplicates):
 - Download once per representation; do NOT download the same dataset in multiple formats.
 - Prefer .csv/.tsv/.xlsx over .zip/.tar.gz; if tabular exists, do NOT download an archive bundling the same data.
 - Download multiple files only if they are distinct non-overlapping parts (not alternate formats).
+- README handling: if a separate README file is available and provides useful schema/format metadata, download at most one such README (README, README.md, readme.txt, etc.) in addition to dataset file(s), and save it in {downloads_dir}.
 
 Tool use:
 - Use `websearch_cited` for searching.
@@ -42,6 +41,8 @@ Downloading (MCP):
 Output (plain text ONLY):
 - If found and downloaded: print each direct download URL on its own line, then a line "Saved to:" and each absolute saved path on its own line. No extra text.
 - If not found: print "NOT FOUND" then 1–2 sentences stating what you checked.
+
+Once you have successfully downloaded the dataset, STOP. DO NOT KEEP ITERATING. RESPOND RIGHT THAT MOMENT AND BE DONE.
 
 Here is the publication link: {publication_link}
 """
@@ -59,7 +60,7 @@ You are a Python developer who specializes in writing dataset processing scripts
 You have file tools enabled (bash, read, glob, grep, list, codesearch, edit). Use them to inspect the downloaded dataset file and existing scripts in the directories mentioned below before writing code.
 
 Inputs for this task:
-- Downloaded dataset file (may be an archive with subfolders): {dataset_path}
+- Downloaded dataset files (one or more; some may be archives with subfolders): {dataset_paths}
 - Example scripts for different datasets to mimic: {example_scripts_dir}
 - Base template to extend (use this exact path): {base_template_path}
 
@@ -67,6 +68,8 @@ Goal:
 - Inspect the dataset (and, if archived, its contents) and generate a processing script that follows the style and structure of the existing scripts in {example_scripts_dir}.
 - Extend the base experiment at {base_template_path} using its absolute path (e.g., Experiment.extend(str({base_template_path}))) so the script runs without missing-path errors.
 - The script should be ready to run locally against the downloaded data.
+- If a README file is present in {downloads_dir} or inside the dataset archive, read it first and use its information (column names, units, target definitions, split descriptions, missing-value conventions) to improve parsing and field mapping.
+- Filtering policy: ONLY drop rows that are actually invalid or unreadable. Do NOT apply domain-driven filters such as excluding multi-component SMILES ('.'), molecule size thresholds, or other heuristic cleanup unless the dataset itself marks the row as invalid. If you must skip rows, keep the logic minimal and tied to explicit parse errors (e.g., missing required columns, unreadable SMILES).
 - Return only the complete Python script content; do not wrap it in markdown fences or add prose. 
 """
 
@@ -79,7 +82,7 @@ def discover_and_download(publication_url: str) -> str:
     result = send_message(prompt_with_link, timeout=180, agent="dataset-links")
     if not result:
         raise ValueError("No download links found")
-    return result 
+    return result
 
 
 # script generation
@@ -87,32 +90,48 @@ def discover_and_download(publication_url: str) -> str:
 
 def generate_processing_script() -> Path:
     """
-    Generates a dataset processing script for the first downloaded dataset.
+    Generates a dataset processing script from downloaded dataset files.
 
     :returns: Path to the generated script
-    :raises FileNotFoundError: If no downloaded file exists
+    :raises FileNotFoundError: If no suitable downloaded dataset file exists
     """
-    dataset_path = get_downloaded_file()
-    return generate_processing_script_for_dataset(dataset_path)
+    downloaded_files = get_downloaded_files()
+    dataset_files = [
+        path for path in downloaded_files if "readme" not in path.name.lower()
+    ]
+    if not dataset_files:
+        raise FileNotFoundError(f"No dataset file in {DOWNLOADS_DIR}.")
+
+    return generate_processing_script_for_dataset(dataset_files)
 
 
 def generate_processing_script_for_dataset(
-    dataset_path: Path,
+    dataset_paths: Path | list[Path],
     target_dir: Path | None = None,
 ) -> Path:
     """
-    Generates a dataset processing script for the provided dataset path.
+    Generates a dataset processing script for the provided dataset path(s).
 
-    :param dataset_path: Path to the dataset file or archive
+    :param dataset_paths: Path to a dataset file/archive, or a list of dataset paths
     :param target_dir: Optional target directory for generated scripts
     :returns: Path to the generated script
-    :raises FileNotFoundError: If the dataset path does not exist
+    :raises FileNotFoundError: If any dataset path does not exist
     """
-    if not dataset_path.exists():
-        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+    dataset_paths: list[Path]
+    if isinstance(dataset_paths, list):
+        dataset_paths = dataset_paths
+    else:
+        dataset_paths = [dataset_paths]
+
+    for path in dataset_paths:
+        if not path.exists():
+            raise FileNotFoundError(f"Dataset not found: {path}")
+
+    dataset_paths_text = "\n".join(str(path) for path in dataset_paths)
 
     prompt_with_paths = SCRIPT_GENERATION_PROMPT.format(
-        dataset_path=dataset_path,
+        dataset_paths=dataset_paths_text,
+        downloads_dir=DOWNLOADS_DIR,
         example_scripts_dir=EXAMPLE_SCRIPTS_DIR,
         base_template_path=BASE_TEMPLATE_PATH,
     )
@@ -120,7 +139,7 @@ def generate_processing_script_for_dataset(
 
     output_dir = target_dir or SCRIPTS_ARTIFACTS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
-    target_name = f"{dataset_path.stem}_generated.py"
+    target_name = f"{dataset_paths[0].stem}_generated.py"
     target_path = output_dir / target_name
     with target_path.open("w", encoding="utf-8") as f:
         f.write(response)
@@ -128,15 +147,16 @@ def generate_processing_script_for_dataset(
     return target_path
 
 
-def get_downloaded_file() -> Path:
+def get_downloaded_files() -> list[Path]:
     """
-    Returns the first downloaded file from the downloads artifacts folder.
+    Returns all downloaded files from the downloads artifacts folder.
 
-    :returns: Path to the downloaded file
+    :returns: Sorted list of downloaded file paths
     :raises FileNotFoundError: If no files exist in the downloads folder
     """
-    # returns first file in folder; for now assumes there is only one
-    for path in sorted(DOWNLOADS_DIR.rglob("*")):
-        if path.is_file():
-            return path
+    files: list[Path] = [
+        path for path in sorted(DOWNLOADS_DIR.rglob("*")) if path.is_file()
+    ]
+    if files:
+        return files
     raise FileNotFoundError(f"No files in {DOWNLOADS_DIR}")
